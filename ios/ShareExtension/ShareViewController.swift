@@ -1,8 +1,19 @@
 import Social
 import MobileCoreServices
+import UIKit
 import UniformTypeIdentifiers
 
 class ShareViewController: SLComposeServiceViewController {
+
+    private var appGroupId: String {
+        if let id = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as? String {
+            return id
+        }
+        return "group.\(Bundle.main.bundleIdentifier ?? "")"
+    }
+
+    private var isProcessing = false
+    private var didClose = false
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -21,10 +32,13 @@ class ShareViewController: SLComposeServiceViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         print("📱 [BidirectionalShareExt] viewDidAppear called")
-        
-        // Close extension immediately to avoid UI issues
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+
+        // Completing the request tears the extension down, so it waits for the
+        // attachments to be copied out. The timeout only guards a stuck load.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self = self, !self.didClose else { return }
+            print("⏱️ [BidirectionalShareExt] Timed out waiting for attachments")
+            self.closeShareExtension()
         }
     }
     
@@ -42,6 +56,12 @@ class ShareViewController: SLComposeServiceViewController {
     }
     
     private func handleSharedContent() {
+        guard !isProcessing else {
+            print("📱 [BidirectionalShareExt] Already processing, ignoring")
+            return
+        }
+        isProcessing = true
+
         guard let extensionContext = extensionContext else {
             print("❌ [BidirectionalShareExt] No extension context")
             closeShareExtension()
@@ -88,6 +108,19 @@ class ShareViewController: SLComposeServiceViewController {
         var allFilePaths: [String] = []  // 🔥 KEY FIX: Use array to collect ALL files
         var allTextContent: [String] = []
         let group = DispatchGroup()
+
+        // Attachments load on arbitrary threads, so collection is serialised.
+        let lock = NSLock()
+        let appendPath: (String) -> Void = { path in
+            lock.lock()
+            allFilePaths.append(path)
+            lock.unlock()
+        }
+        let appendText: (String) -> Void = { text in
+            lock.lock()
+            allTextContent.append(text)
+            lock.unlock()
+        }
         
         for (attachmentIndex, attachment) in attachments.enumerated() {
             print("🔄 [BidirectionalShareExt] Processing attachment \(attachmentIndex)")
@@ -97,37 +130,37 @@ class ShareViewController: SLComposeServiceViewController {
             if attachment.hasItemConformingToTypeIdentifier("public.file-url") {
                 print("📁 [BidirectionalShareExt] Processing file URL attachment \(attachmentIndex)")
                 attachment.loadItem(forTypeIdentifier: "public.file-url", options: nil) { [weak self] (item, error) in
-                    self?.processFileItem(item: item, error: error, index: attachmentIndex, allFilePaths: &allFilePaths)
+                    self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     group.leave()
                 }
             } else if attachment.hasItemConformingToTypeIdentifier("public.image") {
                 print("🖼️ [BidirectionalShareExt] Processing image attachment \(attachmentIndex)")
                 attachment.loadItem(forTypeIdentifier: "public.image", options: nil) { [weak self] (item, error) in
-                    self?.processFileItem(item: item, error: error, index: attachmentIndex, allFilePaths: &allFilePaths)
+                    self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     group.leave()
                 }
             } else if attachment.hasItemConformingToTypeIdentifier("public.movie") {
                 print("🎬 [BidirectionalShareExt] Processing video attachment \(attachmentIndex)")
                 attachment.loadItem(forTypeIdentifier: "public.movie", options: nil) { [weak self] (item, error) in
-                    self?.processFileItem(item: item, error: error, index: attachmentIndex, allFilePaths: &allFilePaths)
+                    self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     group.leave()
                 }
             } else if attachment.hasItemConformingToTypeIdentifier("public.audio") {
                 print("🎵 [BidirectionalShareExt] Processing audio attachment \(attachmentIndex)")
                 attachment.loadItem(forTypeIdentifier: "public.audio", options: nil) { [weak self] (item, error) in
-                    self?.processFileItem(item: item, error: error, index: attachmentIndex, allFilePaths: &allFilePaths)
+                    self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     group.leave()
                 }
             } else if attachment.hasItemConformingToTypeIdentifier("com.adobe.pdf") {
                 print("📄 [BidirectionalShareExt] Processing PDF attachment \(attachmentIndex)")
                 attachment.loadItem(forTypeIdentifier: "com.adobe.pdf", options: nil) { [weak self] (item, error) in
-                    self?.processFileItem(item: item, error: error, index: attachmentIndex, allFilePaths: &allFilePaths)
+                    self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     group.leave()
                 }
             } else if attachment.hasItemConformingToTypeIdentifier("public.data") {
                 print("📎 [BidirectionalShareExt] Processing data attachment \(attachmentIndex)")
                 attachment.loadItem(forTypeIdentifier: "public.data", options: nil) { [weak self] (item, error) in
-                    self?.processFileItem(item: item, error: error, index: attachmentIndex, allFilePaths: &allFilePaths)
+                    self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     group.leave()
                 }
             } else if attachment.hasItemConformingToTypeIdentifier("public.plain-text") {
@@ -137,7 +170,7 @@ class ShareViewController: SLComposeServiceViewController {
                         print("❌ [BidirectionalShareExt] Error loading text: \(error)")
                     } else if let text = item as? String {
                         print("✅ [BidirectionalShareExt] Got text: \(text)")
-                        allTextContent.append(text)
+                        appendText(text)
                     }
                     group.leave()
                 }
@@ -148,7 +181,7 @@ class ShareViewController: SLComposeServiceViewController {
                         print("❌ [BidirectionalShareExt] Error loading URL: \(error)")
                     } else if let url = item as? URL {
                         print("✅ [BidirectionalShareExt] Got URL: \(url.absoluteString)")
-                        allTextContent.append(url.absoluteString)
+                        appendText(url.absoluteString)
                     }
                     group.leave()
                 }
@@ -157,14 +190,11 @@ class ShareViewController: SLComposeServiceViewController {
                 let typeIdentifier = attachment.registeredTypeIdentifiers.first ?? "public.data"
                 attachment.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { [weak self] (item, error) in
                     // Try to process as file first, then as text
-                    if let url = item as? URL {
-                        print("✅ [BidirectionalShareExt] Got generic file URL: \(url.path)")
-                        allFilePaths.append(url.path)
-                    } else if let text = item as? String {
+                    if let text = item as? String {
                         print("✅ [BidirectionalShareExt] Got generic text: \(text)")
-                        allTextContent.append(text)
+                        appendText(text)
                     } else {
-                        print("⚠️ [BidirectionalShareExt] Generic item is neither URL nor String: \(type(of: item))")
+                        self?.processFileItem(item: item, error: error, index: attachmentIndex, append: appendPath)
                     }
                     group.leave()
                 }
@@ -201,14 +231,89 @@ class ShareViewController: SLComposeServiceViewController {
         }
     }
     
-    private func processFileItem(item: Any?, error: Error?, index: Int, allFilePaths: inout [String]) {
+    private func processFileItem(
+        item: Any?,
+        error: Error?,
+        index: Int,
+        append: (String) -> Void
+    ) {
         if let error = error {
             print("❌ [BidirectionalShareExt] Error loading file \(index): \(error)")
-        } else if let url = item as? URL {
+            return
+        }
+
+        // iOS deletes the attachment as soon as the extension finishes, and the
+        // main app cannot reach the extension sandbox, so every item is copied
+        // into the App Group container before the path is handed over.
+        if let url = item as? URL, url.isFileURL {
             print("✅ [BidirectionalShareExt] Got file URL \(index): \(url.path)")
-            allFilePaths.append(url.path)  // 🔥 KEY FIX: APPEND instead of overwrite
+            if let path = copyIntoSharedContainer(from: url) {
+                append(path)
+            }
+        } else if let image = item as? UIImage {
+            print("✅ [BidirectionalShareExt] Got UIImage \(index)")
+            if let data = image.jpegData(compressionQuality: 0.95),
+               let path = writeIntoSharedContainer(data: data, name: "shared-\(uniqueStamp(index)).jpg") {
+                append(path)
+            }
+        } else if let data = item as? Data {
+            print("✅ [BidirectionalShareExt] Got Data \(index): \(data.count) bytes")
+            if let path = writeIntoSharedContainer(data: data, name: "shared-\(uniqueStamp(index)).dat") {
+                append(path)
+            }
         } else {
-            print("⚠️ [BidirectionalShareExt] File item \(index) is not URL: \(type(of: item))")
+            print("⚠️ [BidirectionalShareExt] File item \(index) is not a file: \(type(of: item))")
+        }
+    }
+
+    private func uniqueStamp(_ index: Int) -> String {
+        "\(Int(Date().timeIntervalSince1970))-\(index)"
+    }
+
+    /// Directory both the extension and the main app can read.
+    private func sharedFilesDirectory() -> URL? {
+        // /tmp keeps the iOS Simulator working when the App Group is unavailable,
+        // matching the JSON handoff in saveShareData().
+        let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
+            ?? URL(fileURLWithPath: "/tmp")
+        let directory = container.appendingPathComponent("shared_files")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory
+        } catch {
+            print("❌ [BidirectionalShareExt] Cannot create shared_files: \(error)")
+            return nil
+        }
+    }
+
+    private func copyIntoSharedContainer(from url: URL) -> String? {
+        let name = url.lastPathComponent.isEmpty ? "shared-\(uniqueStamp(0))" : url.lastPathComponent
+        guard let destination = sharedFilesDirectory()?.appendingPathComponent(name) else {
+            return nil
+        }
+        do {
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.copyItem(at: url, to: destination)
+            print("📦 [BidirectionalShareExt] Copied to \(destination.path)")
+            return destination.path
+        } catch {
+            print("❌ [BidirectionalShareExt] Copy failed: \(error)")
+            return nil
+        }
+    }
+
+    private func writeIntoSharedContainer(data: Data, name: String) -> String? {
+        guard let destination = sharedFilesDirectory()?.appendingPathComponent(name) else {
+            return nil
+        }
+        do {
+            try data.write(to: destination)
+            print("📦 [BidirectionalShareExt] Wrote to \(destination.path)")
+            return destination.path
+        } catch {
+            print("❌ [BidirectionalShareExt] Write failed: \(error)")
+            return nil
         }
     }
     
@@ -262,11 +367,8 @@ class ShareViewController: SLComposeServiceViewController {
     }
     
     private func saveShareData(_ data: [String: Any]) {
-        guard let appGroupId = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as? String else {
-            print("ShareExtension: AppGroupId not found in Info.plist")
-            return
-        }
-        
+        let appGroupId = self.appGroupId
+
         // Save to system temp file for iOS Simulator compatibility (same path as plugin)
         let sharedTmpPath = URL(fileURLWithPath: "/tmp/")
         let shareFilePath = sharedTmpPath.appendingPathComponent("share_intent_data_\(appGroupId).json")
@@ -369,6 +471,8 @@ class ShareViewController: SLComposeServiceViewController {
     }
     
     private func closeShareExtension() {
+        guard !didClose else { return }
+        didClose = true
         extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
     }
 }

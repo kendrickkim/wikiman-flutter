@@ -82,7 +82,13 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.menu_book_rounded, size: 64),
+                    Center(
+                      child: Image.asset(
+                        'assets/app_icon.png',
+                        width: 64,
+                        height: 64,
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     Text(
                       '접속 정보',
