@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Wikiman</string>
+	<key>CFBundleExecutable</key>
+	<string>ShareExtension</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.wikimanApp.ShareExtension</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>ShareExtension</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>NSExtensionActivationRule</key>
+			<string>SUBQUERY (
+    extensionItems,
+    $extensionItem,
+    SUBQUERY (
+        $extensionItem.attachments,
+        $attachment,
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.plain-text" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.file-url" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" OR
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+    ).@count &gt; 0
+    AND
+    SUBQUERY (
+        $extensionItem.attachments,
+        $attachment,
+        ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.example.wikimanApp.ShareExtension.blocker"
+    ).@count == 0
+).@count &gt; 0</string>
+		</dict>
+		<key>NSExtensionMainStoryboard</key>
+		<string>MainInterface</string>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+	</dict>
+	<key>AppGroupId</key>
+	<string>group.com.example.wikimanApp</string>
+	<key>MainAppBundleId</key>
+	<string>com.example.wikimanApp</string>
+</dict>
+</plist>
