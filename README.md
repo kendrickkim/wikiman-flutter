@@ -2,29 +2,63 @@
 
 # Wikiman Flutter
 
-Flutter app that opens Wikiman in an admin-only WebView.
+The Android and iOS companion app for [Wikiman](https://github.com/kendrickkim/wikiman).
 
-The backend and frontend live in separate repositories.
+It opens an existing Wikiman site in a WebView and lets the site owner send
+text, photos, and files from the system share sheet directly to Quick Posts.
+This is an admin tool, not a standalone wiki server.
 
-## Features
+## What it does
 
-- Enter Wikiman URL, admin username, and password
-- Enter the WebView only after the login API confirms `writer` permission
-- Store connection details in the device secure store and prefill them next time
-- Return to the connection screen automatically when the web session logs out
-- Show **Change connection** in the web user menu only inside the app
-- Receive text, images, and files via the Android·iOS share sheet as **Wikiman**
-- Upload shared files and open the quick-post editor with a Markdown draft
+- Connects to a Wikiman site after confirming the account has `writer` access
+- Keeps the connection details in the device secure store
+- Receives text, images, and files through the Android and iOS share sheet
+- Uploads shared files and prepares a Markdown draft in Quick Posts
+- Matches the WebView and system bars to the selected site theme
+- Returns to the connection screen when the web session logs out
 
-## Run
+## Run locally
+
+You need Flutter 3.11 or newer with the Android or iOS toolchain configured.
 
 ```bash
+flutter pub get
 flutter run
 ```
 
-Supports Android and iOS. Cleartext HTTP is allowed so private-network Wikiman
-instances work; prefer HTTPS on the public internet.
+Enter the URL of a running Wikiman site and sign in with its writer account.
 
-Shared file size limits follow **Site admin → Attachments → Size limit** and are
-enforced on the server as well. For iOS distribution, set the same Development
-Team and App Group entitlements on both the Runner and ShareExtension targets.
+## Platform notes
+
+### iOS
+
+Before distributing the app, assign the same Development Team and App Group to
+both the `Runner` and `ShareExtension` targets. The extension copies shared
+files into that App Group so the main app can upload them.
+
+### Private-network HTTP
+
+The app allows cleartext HTTP for Wikiman instances on a private network. Use
+HTTPS whenever the site is reachable from the public internet.
+
+Shared uploads use the limit configured in **Site admin → Attachments → Size
+limit**. The server enforces the same limit.
+
+## App icons
+
+Launcher icons and the connection-screen logo are generated from the frontend
+favicon:
+
+```bash
+node tool/generate-app-icons.mjs
+```
+
+Install the frontend dependencies first because the script uses its `sharp`
+package and `public/icons/favicon.svg`.
+
+## Related repositories
+
+- [Wikiman hub](https://github.com/kendrickkim/wikiman)
+- [Frontend](https://github.com/kendrickkim/wikiman-frontend)
+- [Node backend](https://github.com/kendrickkim/wikiman-backend)
+- [PHP backend](https://github.com/kendrickkim/wikiman-backend-php)
