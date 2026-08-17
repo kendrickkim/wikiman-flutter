@@ -48,10 +48,38 @@ void main() {
     await expectLater(
       service.login(_settings),
       throwsA(
+        isA<WikimanAuthException>()
+            .having(
+              (error) => error.message,
+              'message',
+              contains('관리자'),
+            )
+            .having(
+              (error) => error.invalidCredentials,
+              'invalidCredentials',
+              isTrue,
+            ),
+      ),
+    );
+  });
+
+  test('잘못된 비밀번호는 자동 로그인 해제 대상으로 표시한다', () async {
+    final service = WikimanAuthService(
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({'error': 'INVALID_CREDENTIALS'}),
+          401,
+        ),
+      ),
+    );
+
+    await expectLater(
+      service.login(_settings),
+      throwsA(
         isA<WikimanAuthException>().having(
-          (error) => error.message,
-          'message',
-          contains('관리자'),
+          (error) => error.invalidCredentials,
+          'invalidCredentials',
+          isTrue,
         ),
       ),
     );

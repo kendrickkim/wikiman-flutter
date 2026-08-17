@@ -35,11 +35,13 @@ class _WikimanAppState extends State<WikimanApp> {
   StreamSubscription<SharedData>? _shareSubscription;
   SharedData? _pendingShare;
   bool _processingShare = false;
+  bool _autoLoggingIn = false;
+  String _connectionError = '';
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
+    _bootstrap();
     _initSharing();
   }
 
@@ -59,25 +61,69 @@ class _WikimanAppState extends State<WikimanApp> {
     if (initial != null) _receiveShare(initial);
   }
 
-  Future<void> _loadSettings() async {
+  Future<void> _bootstrap() async {
     final settings = await _credentialStore.read();
     if (!mounted) return;
-    setState(() => _settings = settings);
+
+    final shouldAutoLogin = settings.autoLogin && settings.canAttemptLogin;
+    setState(() {
+      _settings = settings;
+      _autoLoggingIn = shouldAutoLogin;
+      _connectionError = '';
+    });
+
+    if (!shouldAutoLogin) return;
+
+    try {
+      await _connect(settings, fromAutoLogin: true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _autoLoggingIn = false;
+        _connectionError = error.toString();
+      });
+    }
   }
 
-  Future<void> _connect(ConnectionSettings settings) async {
-    final session = await _authService.login(settings);
-    await _credentialStore.write(session.settings);
+  Future<void> _disableAutoLogin(ConnectionSettings settings) async {
+    final cleared = settings.normalized().copyWith(autoLogin: false);
+    await _credentialStore.write(cleared);
     if (!mounted) return;
-    setState(() {
-      _settings = session.settings;
-      _session = session;
-    });
-    _processPendingShare();
+    setState(() => _settings = cleared);
+  }
+
+  Future<void> _connect(
+    ConnectionSettings settings, {
+    bool fromAutoLogin = false,
+  }) async {
+    try {
+      final session = await _authService.login(settings);
+      await _credentialStore.write(session.settings);
+      if (!mounted) return;
+      setState(() {
+        _settings = session.settings;
+        _session = session;
+        _autoLoggingIn = false;
+        _connectionError = '';
+      });
+      _processPendingShare();
+    } on WikimanAuthException catch (error) {
+      if (settings.autoLogin && error.invalidCredentials) {
+        await _disableAutoLogin(settings);
+      }
+      rethrow;
+    } finally {
+      if (fromAutoLogin && mounted && _session == null) {
+        setState(() => _autoLoggingIn = false);
+      }
+    }
   }
 
   void _changeConnection() {
-    setState(() => _session = null);
+    setState(() {
+      _session = null;
+      _connectionError = '';
+    });
   }
 
   void _receiveShare(SharedData data) {
@@ -151,7 +197,7 @@ class _WikimanAppState extends State<WikimanApp> {
 
   Widget _buildHome() {
     final settings = _settings;
-    if (settings == null) {
+    if (settings == null || _autoLoggingIn) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final session = _session;
@@ -162,6 +208,10 @@ class _WikimanAppState extends State<WikimanApp> {
         onChangeConnection: _changeConnection,
       );
     }
-    return ConnectionScreen(initialSettings: settings, onConnect: _connect);
+    return ConnectionScreen(
+      initialSettings: settings,
+      initialError: _connectionError,
+      onConnect: _connect,
+    );
   }
 }

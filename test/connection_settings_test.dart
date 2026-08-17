@@ -16,4 +16,22 @@ void main() {
       'https://wiki.example.com/api/auth/login',
     );
   });
+
+  test('자동 로그인 플래그를 유지한 채 정규화한다', () {
+    const settings = ConnectionSettings(
+      url: ' wiki.example.com/ ',
+      username: ' admin ',
+      password: 'secret',
+      autoLogin: true,
+    );
+    final normalized = settings.normalized();
+    expect(normalized.url, 'https://wiki.example.com');
+    expect(normalized.username, 'admin');
+    expect(normalized.autoLogin, isTrue);
+    expect(settings.canAttemptLogin, isTrue);
+    expect(
+      settings.copyWith(autoLogin: false).autoLogin,
+      isFalse,
+    );
+  });
 }

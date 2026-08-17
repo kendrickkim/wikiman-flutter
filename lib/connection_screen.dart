@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 
 import 'connection_settings.dart';
+import 'wikiman_auth_service.dart';
 
 class ConnectionScreen extends StatefulWidget {
   const ConnectionScreen({
     required this.initialSettings,
     required this.onConnect,
+    this.initialError = '',
     super.key,
   });
 
   final ConnectionSettings initialSettings;
   final Future<void> Function(ConnectionSettings settings) onConnect;
+  final String initialError;
 
   @override
   State<ConnectionScreen> createState() => _ConnectionScreenState();
@@ -23,7 +26,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _connecting = false;
   bool _showPassword = false;
-  String _error = '';
+  late bool _autoLogin;
+  late String _error;
 
   @override
   void initState() {
@@ -35,6 +39,22 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     _passwordController = TextEditingController(
       text: widget.initialSettings.password,
     );
+    _autoLogin = widget.initialSettings.autoLogin;
+    _error = widget.initialError;
+  }
+
+  @override
+  void didUpdateWidget(covariant ConnectionScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialSettings.autoLogin !=
+            widget.initialSettings.autoLogin &&
+        !_connecting) {
+      _autoLogin = widget.initialSettings.autoLogin;
+    }
+    if (widget.initialError.isNotEmpty &&
+        widget.initialError != oldWidget.initialError) {
+      _error = widget.initialError;
+    }
   }
 
   @override
@@ -57,11 +77,19 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           url: _urlController.text,
           username: _usernameController.text,
           password: _passwordController.text,
+          autoLogin: _autoLogin,
         ),
       );
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.toString());
+      setState(() {
+        _error = error.toString();
+        if (error is WikimanAuthException && error.invalidCredentials) {
+          _autoLogin = false;
+        } else {
+          _autoLogin = widget.initialSettings.autoLogin;
+        }
+      });
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -157,8 +185,22 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                           ? '비밀번호를 입력해 주세요.'
                           : null,
                     ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      value: _autoLogin,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('자동 로그인'),
+                      subtitle: const Text(
+                        '앱을 다시 열면 저장된 정보로 바로 접속합니다.',
+                      ),
+                      onChanged: _connecting
+                          ? null
+                          : (value) =>
+                                setState(() => _autoLogin = value ?? false),
+                    ),
                     if (_error.isNotEmpty) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 8),
                       Text(
                         _error,
                         style: TextStyle(

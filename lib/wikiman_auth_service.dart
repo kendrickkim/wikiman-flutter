@@ -12,9 +12,15 @@ class WikimanSession {
 }
 
 class WikimanAuthException implements Exception {
-  const WikimanAuthException(this.message);
+  const WikimanAuthException(
+    this.message, {
+    this.invalidCredentials = false,
+  });
 
   final String message;
+
+  /// True when saved login details should not be reused for auto-login.
+  final bool invalidCredentials;
 
   @override
   String toString() => message;
@@ -57,7 +63,10 @@ class WikimanAuthService {
     if (response.statusCode != 200) {
       final code = data['error'];
       if (code == 'INVALID_CREDENTIALS') {
-        throw const WikimanAuthException('아이디 또는 비밀번호가 올바르지 않습니다.');
+        throw const WikimanAuthException(
+          '아이디 또는 비밀번호가 올바르지 않습니다.',
+          invalidCredentials: true,
+        );
       }
       throw WikimanAuthException('로그인에 실패했습니다. (${response.statusCode})');
     }
@@ -67,7 +76,10 @@ class WikimanAuthService {
         user is Map<String, dynamic> &&
         (user['canWrite'] == true || user['role'] == 'writer');
     if (!canWrite) {
-      throw const WikimanAuthException('관리자 권한이 있는 계정만 접속할 수 있습니다.');
+      throw const WikimanAuthException(
+        '관리자 권한이 있는 계정만 접속할 수 있습니다.',
+        invalidCredentials: true,
+      );
     }
 
     final token = data['token'];
@@ -82,7 +94,10 @@ class WikimanAuthService {
     if (settings.url.isEmpty ||
         settings.username.isEmpty ||
         settings.password.isEmpty) {
-      throw const WikimanAuthException('URL, 아이디, 비밀번호를 모두 입력해 주세요.');
+      throw const WikimanAuthException(
+        'URL, 아이디, 비밀번호를 모두 입력해 주세요.',
+        invalidCredentials: true,
+      );
     }
 
     final uri = Uri.tryParse(settings.url);
