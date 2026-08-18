@@ -24,12 +24,14 @@ class WikimanGithubRelease {
     required this.version,
     required this.apkUrl,
     required this.apkName,
+    this.notes = '',
   });
 
   final String tag;
   final String version;
   final String apkUrl;
   final String apkName;
+  final String notes;
 }
 
 WikimanGithubRelease parseGithubRelease(Object? raw) {
@@ -65,6 +67,7 @@ WikimanGithubRelease parseGithubRelease(Object? raw) {
     version: tag,
     apkUrl: url,
     apkName: name.isEmpty ? 'wikiman-update.apk' : name,
+    notes: '${raw['body'] ?? ''}'.trim(),
   );
 }
 

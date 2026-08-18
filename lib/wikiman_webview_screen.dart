@@ -489,6 +489,7 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen>
         'currentVersion': normalizeAppVersion(current),
         'latestVersion': normalizeAppVersion(release.version),
         'latestTag': release.tag,
+        'notes': release.notes,
         'newer': newer,
         'updating': _updateBar != null,
       });
@@ -524,6 +525,7 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen>
           'currentVersion': normalizeAppVersion(current),
           'latestVersion': normalizeAppVersion(release.version),
           'latestTag': release.tag,
+          'notes': release.notes,
           'newer': false,
           'updating': false,
         });

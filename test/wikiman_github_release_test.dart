@@ -11,6 +11,7 @@ void main() {
   test('GitHub 릴리스 JSON에서 wikiman APK를 고른다', () {
     final release = parseGithubRelease({
       'tag_name': 'v0.1.4',
+      'body': '## 변경 사항\n\n- 자체 업데이트',
       'assets': [
         {'name': 'notes.txt', 'browser_download_url': 'https://example.com/notes.txt'},
         {
@@ -26,6 +27,7 @@ void main() {
     expect(release.version, 'v0.1.4');
     expect(release.apkName, 'wikiman-0.1.4.apk');
     expect(release.apkUrl, 'https://example.com/wikiman-0.1.4.apk');
+    expect(release.notes, '## 변경 사항\n\n- 자체 업데이트');
   });
 
   test('최신 릴리스 API 응답을 파싱한다', () async {
@@ -35,6 +37,7 @@ void main() {
       return http.Response(
         jsonEncode({
           'tag_name': 'v0.1.4',
+          'body': '- 버그 수정',
           'assets': [
             {
               'name': 'wikiman-0.1.4.apk',
@@ -50,6 +53,7 @@ void main() {
     final release = await WikimanGithubReleaseClient(client: client).fetchLatest();
     expect(release.tag, 'v0.1.4');
     expect(release.apkUrl, 'https://example.com/wikiman-0.1.4.apk');
+    expect(release.notes, '- 버그 수정');
   });
 
   test('릴리스 APK를 파일로 받고 진행률을 알린다', () async {
