@@ -1,14 +1,22 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'wikiman_apk_installer.dart';
+import 'wikiman_app_updater.dart';
+import 'wikiman_app_version.dart';
 import 'wikiman_auth_service.dart';
+import 'wikiman_back_exit.dart';
+import 'wikiman_github_release.dart';
 import 'wikiman_native_command.dart';
 import 'wikiman_native_media.dart';
 
@@ -30,8 +38,13 @@ class WikimanWebViewScreen extends StatefulWidget {
 
 const _backgroundMessagePrefix = 'background:';
 
-class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
+class _WikimanWebViewScreenState extends State<WikimanWebViewScreen>
+    with WidgetsBindingObserver {
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
+  final WikimanBackExitGate _backExit = WikimanBackExitGate();
+  final WikimanGithubReleaseClient _releases = WikimanGithubReleaseClient();
+  final WikimanAppUpdater _updater = WikimanAppUpdater();
+  final WikimanApkInstaller _installer = WikimanApkInstaller();
   late final WikimanNativeMedia _media;
   late WebViewController _controller;
   Key _webViewKey = UniqueKey();
@@ -39,15 +52,30 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
   bool _pageReady = false;
   Color? _pageBackground;
   Color? _headerBackground;
+  String _currentVersion = '';
+  WikimanGithubRelease? _latestRelease;
+  bool _updateBusy = false;
+  bool _awaitingInstallPermission = false;
+  DateTime? _lastProgressAt;
+  _UpdateBarState? _updateBar;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _media = WikimanNativeMedia(session: widget.session, emit: _emitNative);
     _controller = _createController();
     widget.sharedDraft.addListener(_deliverSharedDraft);
+    _loadCurrentVersion();
     _openWikiman();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _awaitingInstallPermission) {
+      _resumeUpdateAfterPermission();
+    }
   }
 
   @override
@@ -60,7 +88,9 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.sharedDraft.removeListener(_deliverSharedDraft);
+    _updater.cancel();
     _media.dispose();
     super.dispose();
   }
@@ -171,6 +201,14 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
         _media.stopRecording();
       case WikimanNativeCommand.background:
         _applyPageBackground(message.substring(_backgroundMessagePrefix.length));
+      case WikimanNativeCommand.keyboardFocus:
+        _installer.focusWebView();
+      case WikimanNativeCommand.updateCheck:
+        _checkUpdate();
+      case WikimanNativeCommand.updateStart:
+        _startUpdate();
+      case WikimanNativeCommand.updateCancel:
+        _cancelUpdate();
       case WikimanNativeCommand.logout:
       case WikimanNativeCommand.unknown:
         break;
@@ -237,6 +275,64 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
           window.dispatchEvent(new CustomEvent('wikiman-native', { detail: detail }));
         } catch (e) {}
       };
+    ''');
+    if (Platform.isAndroid) await _injectAndroidKeyboardFix();
+  }
+
+  Future<void> _injectAndroidKeyboardFix() async {
+    await _controller.runJavaScript(r'''
+      (function () {
+        if (window.__wikimanKeyboardFix) return;
+        window.__wikimanKeyboardFix = true;
+        function isEditable(el) {
+          if (!el || el.nodeType !== 1) return false;
+          var tag = el.tagName;
+          var type = String(el.type || '').toLowerCase();
+          if (tag === 'TEXTAREA') return true;
+          if (tag === 'INPUT' && !/^(button|checkbox|radio|file|hidden|submit|reset|range|color)$/.test(type)) return true;
+          return !!el.isContentEditable;
+        }
+        function findEditable(node) {
+          var el = node;
+          if (el && el.nodeType === 3) el = el.parentElement;
+          while (el && el.nodeType === 1) {
+            if (isEditable(el)) return el;
+            el = el.parentElement;
+          }
+          return null;
+        }
+        function forceIme(el) {
+          if (!el || !document.body) return;
+          var selection = window.getSelection && window.getSelection();
+          var range = null;
+          try {
+            if (selection && selection.rangeCount) range = selection.getRangeAt(0).cloneRange();
+          } catch (e) {}
+          try { el.setAttribute('inputmode', 'text'); } catch (e) {}
+          var dummy = document.createElement('textarea');
+          dummy.setAttribute('inputmode', 'text');
+          dummy.setAttribute('autocomplete', 'off');
+          dummy.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:16px;opacity:0.01;font-size:16px;border:0;padding:0;margin:0;z-index:-1;';
+          document.body.appendChild(dummy);
+          dummy.focus();
+          setTimeout(function () {
+            dummy.remove();
+            try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+            try {
+              if (range && selection && el.contains(range.commonAncestorContainer)) {
+                selection.removeAllRanges();
+                selection.addRange(range);
+              }
+            } catch (e) {}
+          }, 30);
+        }
+        document.addEventListener('pointerdown', function (event) {
+          var el = findEditable(event.target);
+          if (!el) return;
+          if (window.WikimanApp && WikimanApp.postMessage) WikimanApp.postMessage('keyboard:focus');
+          forceIme(el);
+        }, true);
+      })();
     ''');
   }
 
@@ -402,8 +498,210 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
 
   Future<void> _handleBack() async {
     if (await _controller.canGoBack()) {
+      _backExit.reset();
       await _controller.goBack();
+      return;
     }
+    if (!_backExit.confirmExit()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('한 번 더 뒤로 가면 종료합니다'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      return;
+    }
+    SystemNavigator.pop();
+  }
+
+  Future<void> _loadCurrentVersion() async {
+    final version = await _installer.currentVersion();
+    if (!mounted) return;
+    setState(() => _currentVersion = version);
+  }
+
+  Future<void> _checkUpdate() async {
+    if (!Platform.isAndroid) {
+      await _emitNative({
+        'type': 'update:info',
+        'supported': false,
+        'currentVersion': _currentVersion,
+        'latestVersion': '',
+        'newer': false,
+      });
+      return;
+    }
+    try {
+      final current = _currentVersion.isEmpty
+          ? await _installer.currentVersion()
+          : _currentVersion;
+      final release = await _releases.fetchLatest();
+      if (!mounted) return;
+      setState(() {
+        _currentVersion = current;
+        _latestRelease = release;
+      });
+      final newer = isGithubVersionNewer(current, release.version);
+      await _emitNative({
+        'type': 'update:info',
+        'supported': true,
+        'currentVersion': normalizeAppVersion(current),
+        'latestVersion': normalizeAppVersion(release.version),
+        'latestTag': release.tag,
+        'newer': newer,
+        'updating': _updateBar != null,
+      });
+    } catch (error) {
+      await _emitNative({
+        'type': 'update:error',
+        'message': error.toString(),
+      });
+    }
+  }
+
+  Future<void> _startUpdate() async {
+    if (!Platform.isAndroid) return;
+    if (_updateBusy || _updater.isDownloading || _awaitingInstallPermission) {
+      await _emitNative({'type': 'update:progress', 'status': 'downloading'});
+      return;
+    }
+    _updateBusy = true;
+    try {
+      var release = _latestRelease;
+      if (release == null) {
+        release = await _releases.fetchLatest();
+        if (!mounted) return;
+        setState(() => _latestRelease = release);
+      }
+      final current = _currentVersion.isEmpty
+          ? await _installer.currentVersion()
+          : _currentVersion;
+      if (!isGithubVersionNewer(current, release.version)) {
+        await _emitNative({
+          'type': 'update:info',
+          'supported': true,
+          'currentVersion': normalizeAppVersion(current),
+          'latestVersion': normalizeAppVersion(release.version),
+          'latestTag': release.tag,
+          'newer': false,
+          'updating': false,
+        });
+        return;
+      }
+      if (!await _installer.canInstallPackages()) {
+        _awaitingInstallPermission = true;
+        _showUpdateBar(
+          _UpdateBarState(
+            status: '알 수 없는 앱 설치를 허용해 주세요',
+            received: 0,
+            total: null,
+            cancellable: true,
+          ),
+        );
+        await _installer.openInstallSettings();
+        return;
+      }
+      await _downloadAndInstall(release);
+    } on WikimanUpdateCancelled {
+      _hideUpdateBar();
+    } catch (error) {
+      _hideUpdateBar();
+      await _emitNative({
+        'type': 'update:error',
+        'message': error.toString(),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+    } finally {
+      _updateBusy = false;
+    }
+  }
+
+  Future<void> _resumeUpdateAfterPermission() async {
+    if (!_awaitingInstallPermission) return;
+    if (!await _installer.canInstallPackages()) {
+      _awaitingInstallPermission = false;
+      _hideUpdateBar();
+      await _emitNative({
+        'type': 'update:error',
+        'message': '앱 설치 권한이 필요합니다.',
+      });
+      return;
+    }
+    _awaitingInstallPermission = false;
+    await _startUpdate();
+  }
+
+  Future<void> _downloadAndInstall(WikimanGithubRelease release) async {
+    _showUpdateBar(
+      _UpdateBarState(
+        status: '업데이트를 받는 중',
+        received: 0,
+        total: null,
+        cancellable: true,
+      ),
+    );
+    await _emitNative({'type': 'update:progress', 'status': 'downloading'});
+    final file = await _updater.download(
+      release,
+      onProgress: (received, total) {
+        final now = DateTime.now();
+        final last = _lastProgressAt;
+        final complete = total != null && received >= total;
+        if (!complete &&
+            last != null &&
+            now.difference(last) < const Duration(milliseconds: 200)) {
+          return;
+        }
+        _lastProgressAt = now;
+        final percent = total == null || total <= 0
+            ? ''
+            : ' (${((received / total) * 100).clamp(0, 100).toStringAsFixed(0)}%)';
+        final totalLabel = total == null ? '' : ' / ${formatDownloadBytes(total)}';
+        _showUpdateBar(
+          _UpdateBarState(
+            status: '다운로드 중 ${formatDownloadBytes(received)}$totalLabel$percent',
+            received: received,
+            total: total,
+            cancellable: true,
+          ),
+        );
+      },
+    );
+    _showUpdateBar(
+      const _UpdateBarState(
+        status: '설치를 진행합니다',
+        received: 1,
+        total: 1,
+        cancellable: false,
+      ),
+    );
+    await _emitNative({'type': 'update:progress', 'status': 'installing'});
+    await _installer.installApk(file.path);
+    _hideUpdateBar();
+  }
+
+  void _cancelUpdate() {
+    _awaitingInstallPermission = false;
+    _updater.cancel();
+    _hideUpdateBar();
+    unawaited(_emitNative({'type': 'update:progress', 'status': 'cancelled'}));
+  }
+
+  void _showUpdateBar(_UpdateBarState bar) {
+    if (!mounted) return;
+    setState(() => _updateBar = bar);
+  }
+
+  void _hideUpdateBar() {
+    if (!mounted) return;
+    setState(() => _updateBar = null);
   }
 
   @override
@@ -433,15 +731,67 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
         ),
         child: Scaffold(
           backgroundColor: background,
-          body: Stack(
+          resizeToAvoidBottomInset: false,
+          body: Column(
             children: [
-              Positioned.fill(
-                child: WebViewWidget(key: _webViewKey, controller: _controller),
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: WebViewWidget(
+                        key: _webViewKey,
+                        controller: _controller,
+                        gestureRecognizers: {
+                          Factory<OneSequenceGestureRecognizer>(
+                            () => EagerGestureRecognizer(),
+                          ),
+                        },
+                      ),
+                    ),
+                    if (_progress < 100)
+                      Align(
+                        alignment: Alignment.topCenter,
+                        child: LinearProgressIndicator(value: _progress / 100),
+                      ),
+                  ],
+                ),
               ),
-              if (_progress < 100)
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: LinearProgressIndicator(value: _progress / 100),
+              if (_updateBar != null) _buildUpdateBar(_updateBar!),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpdateBar(_UpdateBarState bar) {
+    final progress = bar.total == null || bar.total! <= 0
+        ? null
+        : (bar.received / bar.total!).clamp(0.0, 1.0);
+    return Material(
+      elevation: 8,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(bar.status, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(value: progress),
+                  ],
+                ),
+              ),
+              if (bar.cancellable)
+                TextButton(
+                  onPressed: _cancelUpdate,
+                  child: const Text('취소'),
                 ),
             ],
           ),
@@ -449,4 +799,18 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen> {
       ),
     );
   }
+}
+
+class _UpdateBarState {
+  const _UpdateBarState({
+    required this.status,
+    required this.received,
+    required this.total,
+    required this.cancellable,
+  });
+
+  final String status;
+  final int received;
+  final int? total;
+  final bool cancellable;
 }

@@ -1,8 +1,15 @@
 package com.example.wikiman_app
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -10,11 +17,12 @@ import java.io.File
 import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
-    private val channelName = "com.example.wikiman_app/heic"
+    private val heicChannelName = "com.example.wikiman_app/heic"
+    private val updateChannelName = "com.example.wikiman_app/update"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, heicChannelName)
             .setMethodCallHandler { call, result ->
                 if (call.method != "convertToPng") {
                     result.notImplemented()
@@ -37,6 +45,97 @@ class MainActivity : FlutterActivity() {
                     )
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, updateChannelName)
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "getVersionName" -> result.success(currentVersionName())
+                        "canInstallPackages" -> result.success(canInstallPackages())
+                        "openInstallSettings" -> {
+                            openInstallSettings()
+                            result.success(null)
+                        }
+                        "focusWebView" -> {
+                            focusWebView()
+                            result.success(null)
+                        }
+                        "installApk" -> {
+                            val path = call.argument<String>("path")
+                            if (path.isNullOrBlank()) {
+                                result.error("INVALID_PATH", "설치할 파일 경로가 없습니다.", null)
+                                return@setMethodCallHandler
+                            }
+                            installApk(path)
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (error: Exception) {
+                    result.error(
+                        "UPDATE_FAILED",
+                        error.message ?: "앱 업데이트를 진행하지 못했습니다.",
+                        null,
+                    )
+                }
+            }
+    }
+
+    private fun currentVersionName(): String {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return info.versionName ?: ""
+    }
+
+    private fun canInstallPackages(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    private fun openInstallSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+            data = Uri.parse("package:$packageName")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
+    private fun focusWebView() {
+        val webView = findWebView(window.decorView) ?: return
+        webView.isFocusable = true
+        webView.isFocusableInTouchMode = true
+        webView.requestFocus()
+    }
+
+    private fun findWebView(view: View): WebView? {
+        if (view is WebView) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findWebView(view.getChildAt(index))?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun installApk(path: String) {
+        val file = File(path)
+        if (!file.exists()) {
+            throw IllegalStateException("설치할 APK를 찾을 수 없습니다.")
+        }
+        val uri = FileProvider.getUriForFile(
+            this,
+            "$packageName.fileprovider",
+            file,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     private fun convertHeicToPng(path: String): String {
