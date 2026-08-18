@@ -39,17 +39,6 @@ class WikimanApkInstaller {
     await _channel.invokeMethod<void>('openInstallSettings');
   }
 
-  Future<void> focusWebView() async {
-    if (!_android) return;
-    try {
-      await _channel.invokeMethod<void>('focusWebView');
-    } on MissingPluginException {
-      return;
-    } on PlatformException {
-      return;
-    }
-  }
-
   Future<void> installApk(String path) async {
     if (!_android) {
       throw const WikimanInstallException('안드로이드에서만 앱을 업데이트할 수 있습니다.');

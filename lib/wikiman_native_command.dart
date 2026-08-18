@@ -7,7 +7,6 @@ enum WikimanNativeCommand {
   recordStart,
   recordStop,
   background,
-  keyboardFocus,
   updateCheck,
   updateStart,
   updateCancel,
@@ -32,8 +31,6 @@ WikimanNativeCommand parseWikimanNativeMessage(String message) {
       return WikimanNativeCommand.recordStart;
     case 'record:stop':
       return WikimanNativeCommand.recordStop;
-    case 'keyboard:focus':
-      return WikimanNativeCommand.keyboardFocus;
     case 'update:check':
       return WikimanNativeCommand.updateCheck;
     case 'update:start':

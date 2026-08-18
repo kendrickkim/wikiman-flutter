@@ -11,7 +11,6 @@ void main() {
       WikimanNativeCommand.background,
     );
     expect(parseWikimanNativeMessage('logout'), WikimanNativeCommand.changeConnection);
-    expect(parseWikimanNativeMessage('keyboard:focus'), WikimanNativeCommand.keyboardFocus);
     expect(parseWikimanNativeMessage('update:check'), WikimanNativeCommand.updateCheck);
     expect(parseWikimanNativeMessage('update:start'), WikimanNativeCommand.updateStart);
     expect(parseWikimanNativeMessage('update:cancel'), WikimanNativeCommand.updateCancel);

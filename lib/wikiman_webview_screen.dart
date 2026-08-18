@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -201,8 +199,6 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen>
         _media.stopRecording();
       case WikimanNativeCommand.background:
         _applyPageBackground(message.substring(_backgroundMessagePrefix.length));
-      case WikimanNativeCommand.keyboardFocus:
-        _installer.focusWebView();
       case WikimanNativeCommand.updateCheck:
         _checkUpdate();
       case WikimanNativeCommand.updateStart:
@@ -275,64 +271,6 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen>
           window.dispatchEvent(new CustomEvent('wikiman-native', { detail: detail }));
         } catch (e) {}
       };
-    ''');
-    if (Platform.isAndroid) await _injectAndroidKeyboardFix();
-  }
-
-  Future<void> _injectAndroidKeyboardFix() async {
-    await _controller.runJavaScript(r'''
-      (function () {
-        if (window.__wikimanKeyboardFix) return;
-        window.__wikimanKeyboardFix = true;
-        function isEditable(el) {
-          if (!el || el.nodeType !== 1) return false;
-          var tag = el.tagName;
-          var type = String(el.type || '').toLowerCase();
-          if (tag === 'TEXTAREA') return true;
-          if (tag === 'INPUT' && !/^(button|checkbox|radio|file|hidden|submit|reset|range|color)$/.test(type)) return true;
-          return !!el.isContentEditable;
-        }
-        function findEditable(node) {
-          var el = node;
-          if (el && el.nodeType === 3) el = el.parentElement;
-          while (el && el.nodeType === 1) {
-            if (isEditable(el)) return el;
-            el = el.parentElement;
-          }
-          return null;
-        }
-        function forceIme(el) {
-          if (!el || !document.body) return;
-          var selection = window.getSelection && window.getSelection();
-          var range = null;
-          try {
-            if (selection && selection.rangeCount) range = selection.getRangeAt(0).cloneRange();
-          } catch (e) {}
-          try { el.setAttribute('inputmode', 'text'); } catch (e) {}
-          var dummy = document.createElement('textarea');
-          dummy.setAttribute('inputmode', 'text');
-          dummy.setAttribute('autocomplete', 'off');
-          dummy.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:16px;opacity:0.01;font-size:16px;border:0;padding:0;margin:0;z-index:-1;';
-          document.body.appendChild(dummy);
-          dummy.focus();
-          setTimeout(function () {
-            dummy.remove();
-            try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
-            try {
-              if (range && selection && el.contains(range.commonAncestorContainer)) {
-                selection.removeAllRanges();
-                selection.addRange(range);
-              }
-            } catch (e) {}
-          }, 30);
-        }
-        document.addEventListener('pointerdown', function (event) {
-          var el = findEditable(event.target);
-          if (!el) return;
-          if (window.WikimanApp && WikimanApp.postMessage) WikimanApp.postMessage('keyboard:focus');
-          forceIme(el);
-        }, true);
-      })();
     ''');
   }
 
@@ -731,22 +669,13 @@ class _WikimanWebViewScreenState extends State<WikimanWebViewScreen>
         ),
         child: Scaffold(
           backgroundColor: background,
-          resizeToAvoidBottomInset: false,
           body: Column(
             children: [
               Expanded(
                 child: Stack(
                   children: [
                     Positioned.fill(
-                      child: WebViewWidget(
-                        key: _webViewKey,
-                        controller: _controller,
-                        gestureRecognizers: {
-                          Factory<OneSequenceGestureRecognizer>(
-                            () => EagerGestureRecognizer(),
-                          ),
-                        },
-                      ),
+                      child: WebViewWidget(key: _webViewKey, controller: _controller),
                     ),
                     if (_progress < 100)
                       Align(
